@@ -1,10 +1,11 @@
 name = Calendar of News
 description = Календарь новостей
 package = custom
-version = "7.x-1.x"
+version = "7.x-1.0"
 core = "7.x"
 configure = admin/config/content/news-calendar
 files[] = news_calendar.module
 files[] = news_calendar.install
 files[] = news_calendar.admin.inc
 files[] = ajax.js
+files[] = README.md

@@ -1,0 +1,381 @@
+<?php
+/**
+ * News Calendar module for Drupal 7
+ *
+ * last upd 09.11.2012
+ * 
+ * Contributors:
+ * - Skutin Alex [skutin@live.ru]
+ * - Maxim Zemskov [nodge@yandex.ru]
+ *
+ */
+
+$news_calendar_loaded_nodes = array();
+
+/**
+ * Implementation of hook_perm().
+ */
+function news_calendar_perm() {
+	return array('configure News Calendar');
+} 
+
+/**
+ * Implementation of hook_menu().
+ */ 
+function news_calendar_menu() {
+	$item = array();
+	
+	$items['admin/config/content/news-calendar'] = array(
+		'title' => t('Календарь новостей'),
+		'description' => t('Settings for news calendar.'),
+		'access arguments' => array('configure News Calendar'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('news_calendar_configuration_form'),
+		'type' => MENU_NORMAL_ITEM,
+		'file' => 'news_calendar.admin.inc',
+	);
+	
+	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
+	$parts = explode('/', $path);
+	$argument_index = array_search('%', $parts);
+	$items[$year_path] = array(
+		'title' => t('Календарь новостей'),
+		'page callback' => 'news_calendar_year_page',
+		'page arguments' => $argument_index ? array($argument_index) : array(),
+		'access callback' => TRUE,
+		'type' => MENU_CALLBACK,
+	);
+	
+	$items['news-calendar/ajax'] = array(
+		'title' => t('Календарь новостей'),
+		'page callback' => 'news_calendar_block_ajax',
+		'access callback' => TRUE,
+		'type' => MENU_CALLBACK,
+	);
+	
+	return $items;
+} 
+
+/**
+ * Implementation of hook_block_info().
+ * blocks config
+ */
+function news_calendar_block_info() {
+	$blocks = array();
+
+	$blocks['news_calendar_month'] = array(
+		'info' => t('News calendar for month'),
+		'cache' => DRUPAL_CACHE_PER_PAGE,
+	);
+	
+	return $blocks;
+}
+
+/**
+ * Implementation of hook_block_view().
+ * view content
+ */
+function news_calendar_block_view($delta = '') {
+	global $news_calendar_loaded_nodes;
+	
+	if (!user_access('access content'))
+		return;
+	
+	$active_date = null;
+	
+	if (arg(0) === 'node' && is_numeric(arg(1))) {
+		$node = node_load(arg(1));
+		$date = news_calendar_get_date_array($node->created);
+		$active_date = $date;
+	}
+	else {
+		if (count($news_calendar_loaded_nodes) > 0) {
+			// находим дату, за которую больше всего новостей
+			/*$month_count = array();
+			foreach ($news_calendar_loaded_nodes as $nid => $time) {
+				$month = date('Y-m', $time);
+				if (!isset($month_count[$month]))
+					$month_count[$month] = 0;
+				$month_count[$month]++;
+			}
+			//var_dump($month_count);
+			asort($month_count, SORT_NUMERIC);
+			$date = explode('-', end(array_keys($month_count)));
+			$date = news_calendar_get_date_array(mktime(0,0,0, $date[1], 1, $date[0]));*/
+			
+			// находим дату первой загруженной новости
+			$date = news_calendar_get_date_array(reset($news_calendar_loaded_nodes));
+		}
+		else
+			$date = news_calendar_get_date_array();	
+	}
+
+	if ($delta === 'news_calendar_month') {
+		$block = array();
+		$block['subject'] = t('Календарь на месяц');
+		$block['content'] = theme('news_calendar_block_markup', array(
+			'date_array' => $date,
+			'active_date' => $active_date,
+		));
+		return $block;
+	}
+}
+
+/**
+ *
+ */
+function news_calendar_year_page($year) {
+	$today_date = news_calendar_get_date_array();
+	$calendar = cal_info(0); // gregorian calendar info
+	
+	$months = array();
+	foreach ($calendar['months'] as $month_num => $month_name) {
+		$months[] = theme('news_calendar_month_markup', array(
+			'month' => $month_num,
+			'year' => $year,
+		));
+	}
+	
+	return array(
+		'#markup' => theme('news_calendar_year_markup', array(
+			'year' => $year,
+			'months' => $months,
+		)),
+	);
+}
+
+/**
+ *
+ */
+function news_calendar_block_ajax() {
+	if (!isset($_POST['month'], $_POST['year'], $_POST['active_date']))
+		drupal_exit();
+	
+	$output = array(
+		'title' => l(news_calendar_get_month_name($_POST['month']), strtr(variable_get('news_calendar_year_path', 'calendar/year/%'), array('%' => $_POST['year']))),
+		'body' => theme('news_calendar_month_markup', array(
+			'month' => $_POST['month'],
+			'year' => $_POST['year'],
+			'active_date' => isset($_POST['active_date']) ? $_POST['active_date'] : null,
+		))
+	);
+
+	drupal_json_output($output);
+	drupal_add_http_header('Content-Type', 'application/json; charset=utf-8');	
+	drupal_exit();
+}
+
+/**
+ * Implements hook_theme().
+ */
+function news_calendar_theme() {
+	return array(
+		'news_calendar_year_markup' => array(
+			'render element' => 'element',
+		),
+		'news_calendar_block_markup' => array(
+			'render element' => 'element',
+		),
+		'news_calendar_month_markup' => array(
+			'render element' => 'element',
+		),
+	);
+}
+
+/**
+ * Returns HTML for the calendar module.
+ *
+ * @ingroup themeable
+ */
+function theme_news_calendar_year_markup($variables) {
+	$months = $variables['months'];
+	$year = $variables['year'];
+	$output = '';
+
+	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
+	$output .= '<a href="'.url(strtr($year_path, array('%' => $year-1))).'">'.t('« Назад').'</a>';
+	$output .= '<h3>'.$year.'</h3>';
+	$output .= '<a href="'.url(strtr($year_path, array('%' => $year+1))).'">'.t('Вперед »').'</a>';
+	
+	$col_count = 4;
+	$output .= '<table><tbody>';
+	foreach ($months as $month_num => $html) {
+		if ($month_num % $col_count == 0) { 
+			$output .= '<tr>'; // start new row
+		}
+
+		// render month
+		$output .= '<td>';
+		$output .= '<div class="month-title">'.news_calendar_get_month_name($month_num+1).'</div>';
+		$output .= $html;
+		$output .= '</td>';
+
+		if ($month_num % $col_count == 3 || $month_num == 11) { 
+			$output .= '</tr>'; // end row
+		}
+	}
+	$output .= '</tbody></table>';
+
+	
+	return '<div class="news_calendar_year">'.$output.'</div>';
+}
+
+/**
+ * Returns HTML for the calendar module.
+ *
+ * @ingroup themeable
+ */
+function theme_news_calendar_block_markup($variables) {
+	$date_array = $variables['date_array'];
+	$output = '';
+	
+	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
+	$output .= '<a href="#" class="news_calendar_prev_button">'.t('« Назад').'</a>';
+	$output .= '<h3 class="news_calendar_month_title">'.l(news_calendar_get_month_name($date_array['m']), strtr($year_path, array('%' => $date_array['y']))).'</h3>';
+	$output .= '<a href="#" class="news_calendar_next_button">'.t('Вперед »').'</a>';
+	
+	$output .= '<div class="news_calendar_month_body">'.theme('news_calendar_month_markup', array(
+		'month' => $date_array['m'],
+		'year' => $date_array['y'],
+		'active_date' => isset($variables['active_date']) ? $variables['active_date'] : null,
+	)).'</div>';
+	
+	drupal_add_js(drupal_get_path('module', 'news_calendar').'/ajax.js', 'file');
+	drupal_add_js('jQuery(document).ready(function($) { 
+		news_calendar('.json_encode(array(
+			'month' => $date_array['m'],
+			'year' => $date_array['y'],
+			'active_date' => isset($variables['active_date']) ? $variables['active_date'] : null,
+			'loading_message' => t('Загрузка...'),
+			'url' => url('news-calendar/ajax'),
+		)).');
+	});', 'inline');
+		
+	return $output;
+}
+
+/**
+ * Returns HTML for the calendar module.
+ *
+ * @ingroup themeable
+ */
+function theme_news_calendar_month_markup($variables) {
+	$month = $variables['month'];
+	$year = $variables['year'];
+	$active_date = isset($variables['active_date']) ? $variables['active_date'] : null;
+	
+	$days_in_month = cal_days_in_month(CAL_GREGORIAN, $month, $year);
+	$days_of_week_counter = 0; // counter for days of week
+	$day = 1;
+	$day_position = 1;
+	
+	$first_day_of_month = jddayofweek(cal_to_jd(CAL_GREGORIAN, $month, 1, $year)); // first day of current month is ... (day of week)
+	if ($first_day_of_month == 0)
+		$first_day_of_month = 7; // sunday fix
+	
+	// --------- month body
+	$output .= '<table><tbody>'.
+			'<tr>'.
+				'<th>ПН</th>'.
+				'<th>ВТ</th>'.
+				'<th>СР</th>'.
+				'<th>ЧТ</th>'.
+				'<th>ПТ</th>'.
+				'<th>СБ</th>'.
+				'<th>ВС</th>'.
+			'</tr>';
+				
+	$result = db_query('SELECT n.created 
+						FROM {node} n 
+						WHERE n.type=:type AND n.created BETWEEN :start AND :end 
+						GROUP BY TO_DAYS(FROM_UNIXTIME(n.created))', array(
+		':type' => variable_get('news_calendar_node_type', 'news'),
+		':start' => mktime(0, 0, 0, $month, 1, $year),
+		':end' => mktime(23, 59, 59, $month, $days_in_month, $year),
+	));
+	
+	$db_days = array();
+	foreach ($result as $record) {
+		$db_days[] = date('j', $record->created);
+	}
+	
+	while ($day <= $days_in_month) {
+		if ($days_of_week_counter == 0 && $day_position == 1)
+			$output .= '<tr>'; // start new row
+			
+		$days_of_week_counter++;
+
+		if ($day == 1 && $day_position !== $first_day_of_month) {
+			// start with correct day of week
+			$output .= '<td></td>';
+			$day_position++;
+			continue;
+		}
+		
+		$str_day = $day;
+		if (in_array($day, $db_days)) {
+			$url = strtr(variable_get('news_calendar_day_path', 'news-calendar/%year%/%month%/%day%'), array(
+				'%year%' => $year,
+				'%month%' => $month,
+				'%day%' => $day,
+			));
+			$str_day = '<a href="'.url($url).'">'.$str_day.'</a>';
+		}
+		
+		$classes = array();
+		if ($year.$month.$day === date('Ynj'))
+			$classes[] = 'new_calendar_today';
+		
+		if (isset($active_date) && $active_date['y'].$active_date['m'].$active_date['d'] === $year.$month.$day)
+			$classes[] = 'news_calendar_active';
+		
+		$output .= '<td'.(!empty($classes) ? ' class="'.implode(' ', $classes).'"' : '').'>'.$str_day.'</td>';
+		
+		$day++;
+		
+		// end row
+		if ($days_of_week_counter == 7 || $day-1 == $days_in_month) { 
+			$output .= '</tr>'; 
+			$days_of_week_counter = 0; 
+		} 
+	}
+	$output .= '</tbody></table>';
+	
+	// --------- end month body
+	
+	return $output;
+}
+
+/**
+ *
+ */
+function news_calendar_get_date_array($time = null) {
+	if (!isset($time))
+		$time = time();
+		
+	return array(
+		'y' => date('Y', $time), 
+		'm' => date('n', $time), 
+		'd' => date('j', $time),
+	);
+}
+
+/**
+ *
+ */
+function news_calendar_get_month_name($month_num) {
+	$months = array('Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь');
+	return $months[$month_num-1];
+}
+
+/**
+ *
+ */
+function news_calendar_node_load($nodes, $types) {
+	global $news_calendar_loaded_nodes;
+
+	foreach ($nodes as $nid => $node) {
+		if ($node->type === variable_get('news_calendar_node_type', 'news'))
+			$news_calendar_loaded_nodes[$nid] = $node->created;
+	}
+}

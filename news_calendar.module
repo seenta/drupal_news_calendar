@@ -23,7 +23,7 @@ function news_calendar_perm() {
  * Implementation of hook_menu().
  */ 
 function news_calendar_menu() {
-	$item = array();
+	$items = array();
 	
 	$items['admin/config/content/news-calendar'] = array(
 		'title' => t('Календарь новостей'),
@@ -36,8 +36,9 @@ function news_calendar_menu() {
 	);
 	
 	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
-	$parts = explode('/', $path);
+	$parts = explode('/', $year_path);
 	$argument_index = array_search('%', $parts);
+	
 	$items[$year_path] = array(
 		'title' => t('Календарь новостей'),
 		'page callback' => 'news_calendar_year_page',
@@ -76,39 +77,10 @@ function news_calendar_block_info() {
  * view content
  */
 function news_calendar_block_view($delta = '') {
-	global $news_calendar_loaded_nodes;
-	
 	if (!user_access('access content'))
 		return;
-	
-	$active_date = null;
-	
-	if (arg(0) === 'node' && is_numeric(arg(1))) {
-		$node = node_load(arg(1));
-		$date = news_calendar_get_date_array($node->created);
-		$active_date = $date;
-	}
-	else {
-		if (count($news_calendar_loaded_nodes) > 0) {
-			// находим дату, за которую больше всего новостей
-			/*$month_count = array();
-			foreach ($news_calendar_loaded_nodes as $nid => $time) {
-				$month = date('Y-m', $time);
-				if (!isset($month_count[$month]))
-					$month_count[$month] = 0;
-				$month_count[$month]++;
-			}
-			//var_dump($month_count);
-			asort($month_count, SORT_NUMERIC);
-			$date = explode('-', end(array_keys($month_count)));
-			$date = news_calendar_get_date_array(mktime(0,0,0, $date[1], 1, $date[0]));*/
-			
-			// находим дату первой загруженной новости
-			$date = news_calendar_get_date_array(reset($news_calendar_loaded_nodes));
-		}
-		else
-			$date = news_calendar_get_date_array();	
-	}
+
+	list($date, $active_date) = news_calendar_get_block_date();
 
 	if ($delta === 'news_calendar_month') {
 		$block = array();
@@ -122,12 +94,53 @@ function news_calendar_block_view($delta = '') {
 }
 
 /**
+ * @return array
+ */
+function news_calendar_get_block_date() {
+	global $news_calendar_loaded_nodes;
+
+	$active_date = null;
+
+	if (arg(0) === 'node' && is_numeric(arg(1))) {
+		$node = node_load(arg(1));
+		if ($node->type === variable_get('news_calendar_node_type', 'news')) {
+			$date = news_calendar_get_date_array($node->created);
+			$active_date = $date;
+			return array($date, $active_date);
+		}
+	}
+
+	if (count($news_calendar_loaded_nodes) > 0) {
+		// находим дату, за которую больше всего новостей
+		/*$month_count = array();
+		foreach ($news_calendar_loaded_nodes as $nid => $time) {
+			$month = date('Y-m', $time);
+			if (!isset($month_count[$month]))
+				$month_count[$month] = 0;
+			$month_count[$month]++;
+		}
+		//var_dump($month_count);
+		asort($month_count, SORT_NUMERIC);
+		$date = explode('-', end(array_keys($month_count)));
+		$date = news_calendar_get_date_array(mktime(0,0,0, $date[1], 1, $date[0]));*/
+
+		// находим дату первой загруженной новости
+		$date = news_calendar_get_date_array(reset($news_calendar_loaded_nodes));
+	}
+	else
+		$date = news_calendar_get_date_array();
+
+	return array($date, $active_date);
+}
+
+/**
  *
  */
 function news_calendar_year_page($year) {
-	$today_date = news_calendar_get_date_array();
-	$calendar = cal_info(0); // gregorian calendar info
+//	$today_date = news_calendar_get_date_array();
 	
+	$calendar = cal_info(CAL_GREGORIAN); // gregorian calendar info
+
 	$months = array();
 	foreach ($calendar['months'] as $month_num => $month_name) {
 		$months[] = theme('news_calendar_month_markup', array(
@@ -193,12 +206,15 @@ function theme_news_calendar_year_markup($variables) {
 	$output = '';
 
 	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
-	$output .= '<a href="'.url(strtr($year_path, array('%' => $year-1))).'">'.t('« Назад').'</a>';
-	$output .= '<h3>'.$year.'</h3>';
-	$output .= '<a href="'.url(strtr($year_path, array('%' => $year+1))).'">'.t('Вперед »').'</a>';
 	
-	$col_count = 4;
-	$output .= '<table><tbody>';
+	$output = '<div class="news_calendar_year_header">';
+	$output .= '<a href="'.url(strtr($year_path, array('%' => $year-1))).'" class="news_calendar_prev_button">'.t('«').'</a>';
+	$output .= '<h3>'.$year.'</h3>';
+	$output .= '<a href="'.url(strtr($year_path, array('%' => $year+1))).'" class="news_calendar_next_button">'.t('»').'</a>';
+	$output .= '</div>';
+	
+	$col_count = 3;
+	$output .= '<table class="news_calendar_year_table"><tbody>';
 	foreach ($months as $month_num => $html) {
 		if ($month_num % $col_count == 0) { 
 			$output .= '<tr>'; // start new row
@@ -229,10 +245,12 @@ function theme_news_calendar_block_markup($variables) {
 	$date_array = $variables['date_array'];
 	$output = '';
 	
+	$output .= '<div class="news_calendar_month_header">';
 	$year_path = variable_get('news_calendar_year_path', 'calendar/year/%');
-	$output .= '<a href="#" class="news_calendar_prev_button">'.t('« Назад').'</a>';
+	$output .= '<a href="#" class="news_calendar_prev_button">«</a>';
 	$output .= '<h3 class="news_calendar_month_title">'.l(news_calendar_get_month_name($date_array['m']), strtr($year_path, array('%' => $date_array['y']))).'</h3>';
-	$output .= '<a href="#" class="news_calendar_next_button">'.t('Вперед »').'</a>';
+	$output .= '<a href="#" class="news_calendar_next_button">»</a>';
+	$output .= '</div>';
 	
 	$output .= '<div class="news_calendar_month_body">'.theme('news_calendar_month_markup', array(
 		'month' => $date_array['m'],
@@ -274,16 +292,16 @@ function theme_news_calendar_month_markup($variables) {
 		$first_day_of_month = 7; // sunday fix
 	
 	// --------- month body
-	$output .= '<table><tbody>'.
+	$output = '<table><thead>'.
 			'<tr>'.
-				'<th>ПН</th>'.
-				'<th>ВТ</th>'.
-				'<th>СР</th>'.
-				'<th>ЧТ</th>'.
-				'<th>ПТ</th>'.
-				'<th>СБ</th>'.
-				'<th>ВС</th>'.
-			'</tr>';
+				'<th>п</th>'.
+				'<th>в</th>'.
+				'<th>с</th>'.
+				'<th>ч</th>'.
+				'<th>п</th>'.
+				'<th>с</th>'.
+				'<th>в</th>'.
+			'</tr></thead><tbody>';
 				
 	$result = db_query('SELECT n.created 
 						FROM {node} n 
